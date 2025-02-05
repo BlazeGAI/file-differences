@@ -1,11 +1,18 @@
 import streamlit as st
 from docx import Document
+from pptx import Presentation
+from openpyxl import load_workbook
 from deepdiff import DeepDiff
 import webcolors
 import os
 import xml.etree.ElementTree as ET
-from utils.display import display_results
-from checkers.word.word_1 import check_word_1
+
+st.title("Assignment Checker 📄")
+
+# Section: Word Document Comparison
+st.header("Word Document Comparison")
+word_file_1 = st.file_uploader("Upload First Word Document", type=["docx"], key="word_1")
+word_file_2 = st.file_uploader("Upload Second Word Document", type=["docx"], key="word_2")
 
 def closest_color(hex_code):
     """Convert hex color codes to the closest known color name."""
@@ -25,10 +32,10 @@ def closest_color(hex_code):
         return closest_name
 
 def extract_text_with_styles(doc_path):
-    """Extracts text along with font colors, background colors, font sizes, alignments, and table formatting."""
+    """Extracts text, font styles, colors, font sizes, and heading styles."""
     doc = Document(doc_path)
     content = []
-    
+
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
@@ -41,43 +48,70 @@ def extract_text_with_styles(doc_path):
             "bold": any(run.bold for run in para.runs),
             "italic": any(run.italic for run in para.runs),
             "underline": any(run.underline for run in para.runs),
-            "alignment": para.alignment,
             "heading": para.style.name if para.style.name.startswith("Heading") else None,
         }
 
+        for run in para.runs:
+            rpr = run._element.find("w:rPr", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+            if rpr is not None:
+                sz = rpr.find("w:sz", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                if sz is not None:
+                    styles["font_size"] = int(sz.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"]) / 2
+
+                color = rpr.find("w:color", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                if color is not None:
+                    styles["font_color"] = closest_color(color.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"])
+
+                highlight = rpr.find("w:highlight", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                if highlight is not None:
+                    styles["background_color"] = closest_color(highlight.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"])
+
         content.append((text, styles))
-    
+
     return content
 
 def compare_word_documents(file1, file2):
-    """Compares text, font styles, colors, font sizes, tables, alignments, and border settings."""
+    """Compares two Word documents for text and formatting differences."""
     text1 = extract_text_with_styles(file1)
     text2 = extract_text_with_styles(file2)
 
     differences = DeepDiff(text1, text2, ignore_order=False, report_repetition=True)
     return differences
 
-st.header("Word Difference Checker")
-word_file_1 = st.file_uploader("Upload First Word Document", type=["docx"], key="word_diff_1")
-word_file_2 = st.file_uploader("Upload Second Word Document", type=["docx"], key="word_diff_2")
-
 if word_file_1 and word_file_2:
-    file1_path = os.path.join("temp1.docx")
-    file2_path = os.path.join("temp2.docx")
-    
-    with open(file1_path, "wb") as f:
-        f.write(word_file_1.getbuffer())
-    with open(file2_path, "wb") as f:
-        f.write(word_file_2.getbuffer())
-    
-    st.write("Comparing documents... ⏳")
-    differences = compare_word_documents(file1_path, file2_path)
-    
+    with open("temp1.docx", "wb") as f1, open("temp2.docx", "wb") as f2:
+        f1.write(word_file_1.getbuffer())
+        f2.write(word_file_2.getbuffer())
+
+    st.subheader("Comparison Results")
+    differences = compare_word_documents("temp1.docx", "temp2.docx")
+
     if differences:
-        st.write("### Differences Found 🧐")
         st.json(differences)
     else:
         st.write("✅ No differences found. The documents are identical.")
-    
-    os.remove(file1_path)
-    os.remove(file2_path)
+
+    os.remove("temp1.docx")
+    os.remove("temp2.docx")
+
+# Section: Excel Assignments
+st.header("Excel Assignments")
+excel_file = st.file_uploader("Upload Excel Assignment", type=["xlsx"], key="excel")
+
+if excel_file:
+    try:
+        workbook = load_workbook(excel_file)
+        st.write("✅ Excel file uploaded successfully.")
+    except Exception as e:
+        st.error(f"Error loading Excel file: {str(e)}")
+
+# Section: PowerPoint Assignments
+st.header("PowerPoint Assignments")
+ppt_file = st.file_uploader("Upload PowerPoint Assignment", type=["pptx"], key="ppt")
+
+if ppt_file:
+    try:
+        prs = Presentation(ppt_file)
+        st.write("✅ PowerPoint file uploaded successfully.")
+    except Exception as e:
+        st.error(f"Error loading PowerPoint file: {str(e)}")
