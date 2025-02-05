@@ -3,32 +3,26 @@ import docx
 from io import BytesIO
 from difflib import Differ
 import pandas as pd
+from itertools import zip_longest  # For handling different paragraph counts
 
 def compare_word_documents(master_file_bytes, student_file_bytes):
     try:
         master_doc = docx.Document(BytesIO(master_file_bytes))
         student_doc = docx.Document(BytesIO(student_file_bytes))
 
-        master_text = "\n".join([p.text for p in master_doc.paragraphs])
-        student_text = "\n".join([p.text for p in student_doc.paragraphs])
-
-        differ = Differ()
-        diff = list(differ.compare(master_text.splitlines(), student_text.splitlines()))
-
         diff_data = []
-        for line in diff:
-            status = ""
-            text = line[2:].strip()  # Remove "+", "-", or "?", and strip whitespace
-            if line.startswith("+ "):
-                status = "Added in Student"
-            elif line.startswith("- "):
-                status = "Removed from Student"
-            elif line.startswith("? "):
-                status = "Changed in Student"
-            else:
-                continue  # Skip "Same" lines to keep the table concise
 
-            diff_data.append({"Status": status, "Text": text})
+        for i, (mp, sp) in enumerate(zip_longest(master_doc.paragraphs, student_doc.paragraphs, fillvalue=docx.paragraph.Paragraph(""))): # Iterate through paragraphs together, even if counts are different
+            for j, (mr, sr) in enumerate(zip_longest(mp.runs, sp.runs, fillvalue=docx.text.run.Run(mp))): # Iterate through runs together, even if counts are different
+                if mr.text != sr.text or get_run_format(mr) != get_run_format(sr): # Check content OR format
+                    diff_data.append({
+                        "Paragraph": i + 1,
+                        "Run": j + 1,
+                        "Master Text": mr.text,
+                        "Student Text": sr.text,
+                        "Master Format": get_run_format(mr),
+                        "Student Format": get_run_format(sr)
+                    })
 
         if not diff_data:
             return ["No differences found."]
@@ -39,6 +33,15 @@ def compare_word_documents(master_file_bytes, student_file_bytes):
         return ["Error: One or both files not found or invalid Word documents."]
     except Exception as e:
         return [f"Error processing documents: {e}"]
+
+def get_run_format(run):
+    format_info = {}
+    format_info["bold"] = run.bold
+    format_info["italic"] = run.italic
+    format_info["underline"] = run.underline
+    format_info["font_size"] = run.font.size and run.font.size.pt # Get font size in points
+    format_info["color"] = run.font.color.rgb if run.font.color.rgb else None # Get color as RGB
+    return format_info
 
 
 st.title("Word Document Comparison (Master vs. Student)")
@@ -60,7 +63,7 @@ if uploaded_master_file and uploaded_student_file:
         df = pd.DataFrame(diff_result)
         st.dataframe(df)
 
-        csv_data = df.to_csv(index=False).encode('utf-8')  # Create CSV data here
+        csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download Diff (CSV)",
             data=csv_data,
