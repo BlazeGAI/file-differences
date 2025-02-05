@@ -3,7 +3,6 @@ from docx import Document
 from deepdiff import DeepDiff
 import webcolors
 import os
-import xml.etree.ElementTree as ET
 
 st.title("Word Document Checker 📄")
 
@@ -28,7 +27,7 @@ def extract_text_with_styles(doc):
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
-            continue
+            continue  # Skip empty paragraphs
 
         styles = {
             "text": text,
@@ -68,7 +67,7 @@ def extract_text_with_styles(doc):
                 cell_styles = {
                     "text": cell_text,
                     "background_color": None,
-                    "border_bottom": None,
+                    "border_bottom": "Unknown",  # Default to unknown
                 }
 
                 tc = cell._tc
@@ -81,10 +80,7 @@ def extract_text_with_styles(doc):
                     borders = tc_pr.find("w:tcBorders", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
                     if borders is not None:
                         bottom_border = borders.find("w:bottom", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-                        if bottom_border is not None:
-                            cell_styles["border_bottom"] = "Present"
-                        else:
-                            cell_styles["border_bottom"] = "Missing"
+                        cell_styles["border_bottom"] = "Present" if bottom_border is not None else "Missing"
 
                 row_data.append(cell_styles)
             table_data.append(row_data)
@@ -106,27 +102,43 @@ def compare_word_documents(master_doc, student_doc):
     for key, diff in differences.items():
         if key == "Text & Formatting Differences":
             for path, change in diff.get("values_changed", {}).items():
-                index = int(path.split("[")[1].split("]")[0])  # Extract index
-                master_entry = master_text[index]
-                student_entry = student_text[index]
+                try:
+                    index = int(path.split("[")[1].split("]")[0])  # Extract index
+                    if index < len(master_text) and index < len(student_text):  # Avoid IndexError
+                        master_entry = master_text[index]
+                        student_entry = student_text[index]
 
-                results.append({
-                    "Category": "Text Change",
-                    "Student Version": student_entry["text"],
-                    "Master Version": master_entry["text"],
-                })
+                        results.append({
+                            "Category": "Text Change",
+                            "Student Version": student_entry["text"],
+                            "Master Version": master_entry["text"],
+                        })
+                except (IndexError, ValueError):
+                    results.append({
+                        "Category": "Error",
+                        "Student Version": "Could not compare",
+                        "Master Version": "Index mismatch",
+                    })
 
         elif key == "Table Differences":
             for path, change in diff.get("values_changed", {}).items():
-                index = int(path.split("[")[1].split("]")[0])  # Extract index
-                master_entry = master_tables[0][index]  # Extracts row data
-                student_entry = student_tables[0][index]
+                try:
+                    index = int(path.split("[")[1].split("]")[0])  # Extract index
+                    if index < len(master_tables[0]) and index < len(student_tables[0]):  # Avoid IndexError
+                        master_entry = master_tables[0][index]  # Extracts row data
+                        student_entry = student_tables[0][index]
 
-                results.append({
-                    "Category": "Table Change",
-                    "Student Version": student_entry,
-                    "Master Version": master_entry,
-                })
+                        results.append({
+                            "Category": "Table Change",
+                            "Student Version": student_entry,
+                            "Master Version": master_entry,
+                        })
+                except (IndexError, ValueError):
+                    results.append({
+                        "Category": "Error",
+                        "Student Version": "Could not compare",
+                        "Master Version": "Index mismatch",
+                    })
 
     return results
 
