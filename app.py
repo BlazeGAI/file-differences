@@ -4,8 +4,6 @@ from io import BytesIO
 from difflib import Differ
 import pandas as pd
 from itertools import zip_longest
-from docx.api import Paragraph, Run # Import correctly
-
 
 def compare_word_documents(master_file_bytes, student_file_bytes):
     try:
@@ -14,16 +12,16 @@ def compare_word_documents(master_file_bytes, student_file_bytes):
 
         diff_data = []
 
-        for i, (mp, sp) in enumerate(zip_longest(master_doc.paragraphs, student_doc.paragraphs, fillvalue=Paragraph(""))):
-            for j, (mr, sr) in enumerate(zip_longest(mp.runs, sp.runs, fillvalue=Run(mp))): # Use correct Run
-                if mr.text != sr.text or get_run_format(mr) != get_run_format(sr):
+        for i, (mp, sp) in enumerate(zip_longest(master_doc.paragraphs, student_doc.paragraphs)):  # No fillvalue here
+            for j, (mr, sr) in enumerate(zip_longest(mp.runs if mp else [], sp.runs if sp else [])): # Conditional run access
+                if (mr and sr and mr.text != sr.text) or (mr and sr and get_run_format(mr) != get_run_format(sr)) or (mr and not sr) or (not mr and sr):  #Check for all differences
                     diff_data.append({
                         "Paragraph": i + 1,
                         "Run": j + 1,
-                        "Master Text": mr.text,
-                        "Student Text": sr.text,
-                        "Master Format": get_run_format(mr),
-                        "Student Format": get_run_format(sr)
+                        "Master Text": mr.text if mr else "", #Handle missing runs
+                        "Student Text": sr.text if sr else "", #Handle missing runs
+                        "Master Format": get_run_format(mr) if mr else {}, #Handle missing runs
+                        "Student Format": get_run_format(sr) if sr else {}  #Handle missing runs
                     })
 
         if not diff_data:
