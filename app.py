@@ -1,6 +1,7 @@
 import streamlit as st
 from docx import Document
 from deepdiff import DeepDiff
+import pandas as pd
 import webcolors
 import os
 
@@ -27,7 +28,7 @@ def extract_text_with_styles(doc):
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
-            continue  # Skip empty paragraphs
+            continue
 
         styles = {
             "text": text,
@@ -93,54 +94,28 @@ def compare_word_documents(master_doc, student_doc):
     master_text, master_tables = extract_text_with_styles(master_doc)
     student_text, student_tables = extract_text_with_styles(student_doc)
 
-    differences = {
-        "Text & Formatting Differences": DeepDiff(master_text, student_text, ignore_order=False, report_repetition=True),
-        "Table Differences": DeepDiff(master_tables, student_tables, ignore_order=False, report_repetition=True),
-    }
+    differences = []
+    
+    for i, (master_entry, student_entry) in enumerate(zip(master_text, student_text)):
+        if master_entry["text"] != student_entry["text"]:
+            differences.append(["Text Change", student_entry["text"], master_entry["text"]])
 
-    results = []
-    for key, diff in differences.items():
-        if key == "Text & Formatting Differences":
-            for path, change in diff.get("values_changed", {}).items():
-                try:
-                    index = int(path.split("[")[1].split("]")[0])  # Extract index
-                    if index < len(master_text) and index < len(student_text):  # Avoid IndexError
-                        master_entry = master_text[index]
-                        student_entry = student_text[index]
+        if master_entry["bold"] != student_entry["bold"]:
+            differences.append(["Bold Difference", "Bold" if student_entry["bold"] else "Not Bold", "Bold" if master_entry["bold"] else "Not Bold"])
 
-                        results.append({
-                            "Category": "Text Change",
-                            "Student Version": student_entry["text"],
-                            "Master Version": master_entry["text"],
-                        })
-                except (IndexError, ValueError):
-                    results.append({
-                        "Category": "Error",
-                        "Student Version": "Could not compare",
-                        "Master Version": "Index mismatch",
-                    })
+        if master_entry["font_color"] != student_entry["font_color"]:
+            differences.append(["Font Color", student_entry["font_color"], master_entry["font_color"]])
 
-        elif key == "Table Differences":
-            for path, change in diff.get("values_changed", {}).items():
-                try:
-                    index = int(path.split("[")[1].split("]")[0])  # Extract index
-                    if index < len(master_tables[0]) and index < len(student_tables[0]):  # Avoid IndexError
-                        master_entry = master_tables[0][index]  # Extracts row data
-                        student_entry = student_tables[0][index]
+    for i, (master_table, student_table) in enumerate(zip(master_tables, student_tables)):
+        for j, (master_row, student_row) in enumerate(zip(master_table, student_table)):
+            for k, (master_cell, student_cell) in enumerate(zip(master_row, student_row)):
+                if master_cell["background_color"] != student_cell["background_color"]:
+                    differences.append(["Cell Background Color", student_cell["background_color"], master_cell["background_color"]])
 
-                        results.append({
-                            "Category": "Table Change",
-                            "Student Version": student_entry,
-                            "Master Version": master_entry,
-                        })
-                except (IndexError, ValueError):
-                    results.append({
-                        "Category": "Error",
-                        "Student Version": "Could not compare",
-                        "Master Version": "Index mismatch",
-                    })
+                if master_cell["border_bottom"] != student_cell["border_bottom"]:
+                    differences.append(["Bottom Border", student_cell["border_bottom"], master_cell["border_bottom"]])
 
-    return results
+    return pd.DataFrame(differences, columns=["Category", "Student Version", "Master Version"])
 
 if word_file_master and word_file_student:
     with open("master.docx", "wb") as f1, open("student.docx", "wb") as f2:
@@ -151,11 +126,11 @@ if word_file_master and word_file_student:
     student_doc = Document("student.docx")
 
     st.subheader("Comparison Results")
-    differences = compare_word_documents(master_doc, student_doc)
+    differences_df = compare_word_documents(master_doc, student_doc)
 
-    if differences:
+    if not differences_df.empty:
         st.write("### Differences Found:")
-        st.table(differences)
+        st.dataframe(differences_df)
     else:
         st.write("✅ No differences found. The student document matches the master.")
 
