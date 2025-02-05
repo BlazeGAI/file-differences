@@ -46,4 +46,32 @@ def get_run_format(run):
     return format_info
 
 
-# ... (rest of the Streamlit code - same as before)
+st.title("Word Document Comparison (Master vs. Student)")
+
+uploaded_master_file = st.file_uploader("Upload Master Document", type=["docx"])
+uploaded_student_file = st.file_uploader("Upload Student Submission", type=["docx"])
+
+if uploaded_master_file and uploaded_student_file:
+    master_file_bytes = uploaded_master_file.getvalue()
+    student_file_bytes = uploaded_student_file.getvalue()
+
+    diff_result = compare_word_documents(master_file_bytes, student_file_bytes)
+
+    if isinstance(diff_result, list) and diff_result and "Error:" in diff_result[0]:
+        st.error(diff_result[0])
+    elif isinstance(diff_result, list) and diff_result and "No differences found." in diff_result[0]:
+        st.info(diff_result[0])
+    elif isinstance(diff_result, list) and diff_result:
+        df = pd.DataFrame(diff_result)
+        st.dataframe(df)
+
+        csv_data = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Diff (CSV)",
+            data=csv_data,
+            file_name="diff.csv",
+            mime="text/csv",
+        )
+    else:
+        st.error("An unexpected error occurred during comparison.")
+
