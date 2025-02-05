@@ -5,14 +5,13 @@ from openpyxl import load_workbook
 from deepdiff import DeepDiff
 import webcolors
 import os
-import xml.etree.ElementTree as ET
 
 st.title("Assignment Checker 📄")
 
 # Section: Word Document Comparison
 st.header("Word Document Comparison")
-word_file_1 = st.file_uploader("Upload First Word Document", type=["docx"], key="word_1")
-word_file_2 = st.file_uploader("Upload Second Word Document", type=["docx"], key="word_2")
+word_file_master = st.file_uploader("Upload Master Document (Correct Version)", type=["docx"], key="master_doc")
+word_file_student = st.file_uploader("Upload Student Document", type=["docx"], key="student_doc")
 
 def closest_color(hex_code):
     """Convert hex color codes to the closest known color name."""
@@ -20,21 +19,12 @@ def closest_color(hex_code):
     try:
         return webcolors.hex_to_name(hex_code)
     except ValueError:
-        min_diff = float("inf")
-        closest_name = None
-        for hex_value, name in webcolors.CSS3_HEX_TO_NAMES.items():
-            r1, g1, b1 = webcolors.hex_to_rgb(hex_code)
-            r2, g2, b2 = webcolors.hex_to_rgb(hex_value)
-            diff = (r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2
-            if diff < min_diff:
-                min_diff = diff
-                closest_name = name
-        return closest_name
+        return hex_code  # Return hex code if no name found
 
 def extract_text_with_styles(doc):
     """Extracts text, font styles, colors, font sizes, and heading styles."""
     content = []
-    
+
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
@@ -68,50 +58,66 @@ def extract_text_with_styles(doc):
 
         content.append(styles)
 
-    # Extract tables
-    tables = []
-    for table in doc.tables:
-        table_data = []
-        for row in table.rows:
-            row_data = []
-            for cell in row.cells:
-                cell_text = cell.text.strip()
-                row_data.append(cell_text)
-            table_data.append(row_data)
-        tables.append(table_data)
+    return content
 
-    return content, tables
-
-def compare_word_documents(doc1, doc2):
+def compare_word_documents(master_doc, student_doc):
     """Compares two Word documents for text and formatting differences."""
-    text1, tables1 = extract_text_with_styles(doc1)
-    text2, tables2 = extract_text_with_styles(doc2)
+    master_text = extract_text_with_styles(master_doc)
+    student_text = extract_text_with_styles(student_doc)
 
-    differences = {
-        "Text & Formatting Differences": DeepDiff(text1, text2, ignore_order=False, report_repetition=True),
-        "Table Differences": DeepDiff(tables1, tables2, ignore_order=False, report_repetition=True),
-    }
+    differences = DeepDiff(master_text, student_text, ignore_order=False, report_repetition=True)
 
-    return differences
+    results = []
+    for key, diff in differences.items():
+        if key == "values_changed":
+            for path, change in diff.items():
+                index = int(path.split("[")[1].split("]")[0])  # Extract index
+                master_entry = master_text[index]
+                student_entry = student_text[index]
 
-if word_file_1 and word_file_2:
-    with open("temp1.docx", "wb") as f1, open("temp2.docx", "wb") as f2:
-        f1.write(word_file_1.getbuffer())
-        f2.write(word_file_2.getbuffer())
+                results.append({
+                    "Category": "Text Change",
+                    "Student Version": student_entry["text"],
+                    "Master Version": master_entry["text"],
+                })
 
-    doc1 = Document("temp1.docx")
-    doc2 = Document("temp2.docx")
+        elif key == "iterable_item_removed":
+            for path, removed in diff.items():
+                results.append({
+                    "Category": "Removed Text",
+                    "Student Version": "(Missing)",
+                    "Master Version": removed["text"],
+                })
+
+        elif key == "iterable_item_added":
+            for path, added in diff.items():
+                results.append({
+                    "Category": "Extra Text",
+                    "Student Version": added["text"],
+                    "Master Version": "(Not in Master)",
+                })
+
+    return results
+
+if word_file_master and word_file_student:
+    with open("master.docx", "wb") as f1, open("student.docx", "wb") as f2:
+        f1.write(word_file_master.getbuffer())
+        f2.write(word_file_student.getbuffer())
+
+    master_doc = Document("master.docx")
+    student_doc = Document("student.docx")
 
     st.subheader("Comparison Results")
-    differences = compare_word_documents(doc1, doc2)
+    differences = compare_word_documents(master_doc, student_doc)
 
-    if differences["Text & Formatting Differences"] or differences["Table Differences"]:
-        st.json(differences)
+    if differences:
+        st.write("### Differences Found:")
+        st.table(differences)
     else:
-        st.write("✅ No differences found. The documents are identical.")
+        st.write("✅ No differences found. The student document matches the master.")
 
-    os.remove("temp1.docx")
-    os.remove("temp2.docx")
+    os.remove("master.docx")
+    os.remove("student.docx")
 
 # Section: Excel Assignments
 st.header("Excel Assignments")
