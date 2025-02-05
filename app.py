@@ -1,266 +1,189 @@
 import streamlit as st
 from docx import Document
-from deepdiff import DeepDiff
 import pandas as pd
-import webcolors
 import os
 from collections import defaultdict
 
-st.title("Word Document Checker 📄")
+st.title("Word Document Format Checker 📄")
 
-# Upload Master and Student Documents
+# Upload Documents
 st.header("Upload Documents for Comparison")
-word_file_master = st.file_uploader("Upload Master Document (Correct Version)", type=["docx"], key="master_doc")
 word_file_student = st.file_uploader("Upload Student Document", type=["docx"], key="student_doc")
 
-def closest_color(hex_code):
-    """Convert hex color codes to the closest known color name."""
-    if not hex_code:
-        return None
-    hex_code = f"#{hex_code}" if not hex_code.startswith("#") else hex_code
-    try:
-        return webcolors.hex_to_name(hex_code)
-    except ValueError:
-        return hex_code  # Return hex code if no name found
+def check_table_above_date(doc):
+    """Check if there's a 2x1 table above the date paragraph (Criteria 2)"""
+    found_date = False
+    for i in range(len(doc.paragraphs) - 1, -1, -1):
+        if "date" in doc.paragraphs[i].text.lower():
+            found_date = True
+            # Check if there's a table before this paragraph
+            tables_before = [table for table in doc.tables 
+                           if doc.element.body.index(table._element) < 
+                           doc.element.body.index(doc.paragraphs[i]._element)]
+            if tables_before and tables_before[-1].rows[0].cells[0].text.strip():
+                last_table = tables_before[-1]
+                return (len(last_table.rows) == 1 and len(last_table.rows[0].cells) == 2,
+                        "Found 2x1 table above date" if len(last_table.rows) == 1 and 
+                        len(last_table.rows[0].cells) == 2 else "Table dimensions incorrect")
+    return (False, "Could not find table above date paragraph")
 
-def get_paragraph_style_info(paragraph):
-    """Extract detailed style information from a paragraph."""
-    style_info = defaultdict(list)
-    
-    # Track position of each run for accurate comparison
-    position = 0
-    for run in paragraph.runs:
-        run_length = len(run.text)
-        
-        # Basic run properties
-        if run.bold:
-            style_info["bold"].append((position, position + run_length))
-        if run.italic:
-            style_info["italic"].append((position, position + run_length))
-        if run.underline:
-            style_info["underline"].append((position, position + run_length))
-            
-        # Font properties
-        rpr = run._element.find("w:rPr", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-        if rpr is not None:
-            # Font size
-            sz = rpr.find("w:sz", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-            if sz is not None:
-                size = int(sz.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"]) / 2
-                style_info["font_size"].append((position, position + run_length, size))
-            
-            # Font color
-            color = rpr.find("w:color", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-            if color is not None:
-                color_val = closest_color(color.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"))
-                style_info["font_color"].append((position, position + run_length, color_val))
-            
-            # Background color
-            highlight = rpr.find("w:highlight", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-            if highlight is not None:
-                highlight_val = closest_color(highlight.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"))
-                style_info["background_color"].append((position, position + run_length, highlight_val))
-        
-        position += run_length
-    
-    return style_info
-
-def extract_text_with_styles(doc):
-    """Extracts text and formatting with improved accuracy."""
-    content = []
-    tables = []
-    
-    # Process paragraphs
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-        
-        style_info = get_paragraph_style_info(para)
-        
-        content.append({
-            "text": text,
-            "style_info": style_info,
-            "heading_level": para.style.name if para.style.name.startswith("Heading") else None,
-            "alignment": para.alignment,
-            "style_name": para.style.name
-        })
-    
-    # Process tables
+def check_address_in_table(doc):
+    """Check if the address is correctly entered in the table (Criteria 3)"""
     for table in doc.tables:
-        table_data = []
-        for row_idx, row in enumerate(table.rows):
-            row_data = []
-            for col_idx, cell in enumerate(row.cells):
-                cell_content = []
-                for para in cell.paragraphs:
-                    if para.text.strip():
-                        style_info = get_paragraph_style_info(para)
-                        cell_content.append({
-                            "text": para.text.strip(),
-                            "style_info": style_info,
-                            "alignment": para.alignment
-                        })
-                
-                # Get cell properties
-                tc = cell._tc
-                tc_pr = tc.find("w:tcPr", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-                cell_properties = {
-                    "content": cell_content,
-                    "background_color": None,
-                    "borders": {
-                        "top": False,
-                        "bottom": False,
-                        "left": False,
-                        "right": False
-                    },
-                    "position": (row_idx, col_idx)
-                }
-                
-                if tc_pr is not None:
-                    # Background color
-                    shd = tc_pr.find("w:shd", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-                    if shd is not None:
-                        cell_properties["background_color"] = closest_color(
-                            shd.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}fill")
-                        )
-                    
-                    # Borders
-                    borders = tc_pr.find("w:tcBorders", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-                    if borders is not None:
-                        for border in ["top", "bottom", "left", "right"]:
-                            border_elem = borders.find(f"w:{border}", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
-                            cell_properties["borders"][border] = border_elem is not None
-                
-                row_data.append(cell_properties)
-            table_data.append(row_data)
-        tables.append(table_data)
-    
-    return content, tables
+        if len(table.rows) == 1 and len(table.rows[0].cells) == 2:
+            cell_1_text = table.rows[0].cells[0].text.strip()
+            return ("Classic Cars Club" in cell_1_text and 
+                    "PO Box 6987" in table.rows[0].cells[1].text.strip(),
+                    "Address found in correct format" if "Classic Cars Club" in cell_1_text else 
+                    "Address not found or incorrectly formatted")
+    return (False, "Could not find appropriate table")
 
-def compare_documents(master_doc, student_doc):
-    """Compare documents with improved difference detection."""
-    master_content, master_tables = extract_text_with_styles(master_doc)
-    student_content, student_tables = extract_text_with_styles(student_doc)
-    
-    differences = []
-    
-    # Compare paragraphs
-    for idx, (master_para, student_para) in enumerate(zip(master_content, student_content)):
-        # Text differences
-        if master_para["text"] != student_para["text"]:
-            differences.append({
-                "type": "Text",
-                "location": f"Paragraph {idx + 1}",
-                "student": student_para["text"],
-                "master": master_para["text"]
-            })
-        
-        # Style differences
-        for style_type, master_styles in master_para["style_info"].items():
-            student_styles = student_para["style_info"][style_type]
-            if master_styles != student_styles:
-                differences.append({
-                    "type": style_type.replace("_", " ").title(),
-                    "location": f"Paragraph {idx + 1}",
-                    "student": str(student_styles),
-                    "master": str(master_styles)
-                })
-        
-        # Heading level differences
-        if master_para["heading_level"] != student_para["heading_level"]:
-            differences.append({
-                "type": "Heading Level",
-                "location": f"Paragraph {idx + 1}",
-                "student": student_para["heading_level"],
-                "master": master_para["heading_level"]
-            })
-    
-    # Compare tables
-    for table_idx, (master_table, student_table) in enumerate(zip(master_tables, student_tables)):
-        for row_idx, (master_row, student_row) in enumerate(zip(master_table, student_table)):
-            for col_idx, (master_cell, student_cell) in enumerate(zip(master_row, student_row)):
-                location = f"Table {table_idx + 1}, Row {row_idx + 1}, Column {col_idx + 1}"
-                
-                # Compare cell content
-                for m_content, s_content in zip(master_cell["content"], student_cell["content"]):
-                    if m_content["text"] != s_content["text"]:
-                        differences.append({
-                            "type": "Table Cell Text",
-                            "location": location,
-                            "student": s_content["text"],
-                            "master": m_content["text"]
-                        })
-                
-                # Compare cell properties
-                if master_cell["background_color"] != student_cell["background_color"]:
-                    differences.append({
-                        "type": "Table Cell Background",
-                        "location": location,
-                        "student": student_cell["background_color"],
-                        "master": master_cell["background_color"]
-                    })
-                
-                # Compare borders
-                for border_type, master_border in master_cell["borders"].items():
-                    student_border = student_cell["borders"][border_type]
-                    if master_border != student_border:
-                        differences.append({
-                            "type": f"Table Cell {border_type.title()} Border",
-                            "location": location,
-                            "student": "Present" if student_border else "Missing",
-                            "master": "Present" if master_border else "Missing"
-                        })
-    
-    return pd.DataFrame(differences)
+def check_formatting(doc):
+    """Check text formatting in the first table (Criteria 4)"""
+    for table in doc.tables:
+        if len(table.rows) == 1 and len(table.rows[0].cells) == 2:
+            cell = table.rows[0].cells[0]
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    if "Classic Cars Club" in run.text:
+                        is_correct = run.bold and run.font.size and run.font.size.pt == 14
+                        return (is_correct, 
+                                "Correct formatting applied" if is_correct else 
+                                "Formatting incorrect or missing")
+    return (False, "Could not find text to check formatting")
 
-if word_file_master and word_file_student:
+def check_bullet_points(doc):
+    """Check for properly formatted bullet points (Criteria 8)"""
+    required_bullets = {
+        "Free entry to local and regional shows",
+        "A 30% entry discount on the national show",
+        "A 25% discount on merchandise purchases",
+        "A free Classic Cars Club plaque",
+        "A free Classic Cars Club license plate frame"
+    }
+    
+    found_bullets = set()
+    for paragraph in doc.paragraphs:
+        if paragraph.style.name and "List" in paragraph.style.name:
+            found_bullets.add(paragraph.text.strip())
+    
+    all_found = required_bullets.issubset(found_bullets)
+    return (all_found, 
+            "All required bullet points found" if all_found else 
+            "Missing or incorrect bullet points")
+
+def check_main_table(doc):
+    """Check the main three-column table formatting (Criteria 9-17)"""
+    results = []
+    
+    for table in doc.tables:
+        if len(table.columns) == 3:  # Found our target table
+            # Check column widths (Criteria 9)
+            widths = [cell._tc.tcPr.tcW.w for cell in table.rows[0].cells]
+            correct_widths = (abs(widths[0] - 1.5 * 1440) < 100 and
+                            abs(widths[1] - 2.25 * 1440) < 100 and
+                            abs(widths[2] - 1.0 * 1440) < 100)
+            results.append(("Column widths correct", correct_widths))
+            
+            # Check for header row formatting (Criteria 15-17)
+            if len(table.rows) > 1:
+                header_row = table.rows[1]  # Second row should be header
+                
+                # Check shading
+                has_shading = False
+                for cell in header_row.cells:
+                    tc_pr = cell._tc.get_or_add_tcPr()
+                    shading = tc_pr.find("w:shd", {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                    if shading is not None and shading.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}fill") == "D9D9D9":
+                        has_shading = True
+                results.append(("Header row shading", has_shading))
+                
+                # Check bold formatting
+                all_bold = True
+                for cell in header_row.cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            if not run.bold:
+                                all_bold = False
+                results.append(("Header row bold formatting", all_bold))
+                
+            # Check merged header cell (Criteria 12-13)
+            if len(table.rows) > 0:
+                first_row = table.rows[0]
+                is_merged = len(first_row.cells) == 1
+                if is_merged:
+                    cell_text = first_row.cells[0].text.strip()
+                    has_correct_text = cell_text == "Available Partner Discounts"
+                    results.append(("Merged header cell", is_merged and has_correct_text))
+            
+    return results
+
+def generate_report(doc):
+    """Generate a comprehensive report of all criteria checks"""
+    results = []
+    
+    # Check criteria 2
+    table_result, table_msg = check_table_above_date(doc)
+    results.append(("2. Table above date", table_result, table_msg))
+    
+    # Check criteria 3
+    address_result, address_msg = check_address_in_table(doc)
+    results.append(("3. Address in table", address_result, address_msg))
+    
+    # Check criteria 4
+    format_result, format_msg = check_formatting(doc)
+    results.append(("4. Text formatting", format_result, format_msg))
+    
+    # Check criteria 8
+    bullets_result, bullets_msg = check_bullet_points(doc)
+    results.append(("8. Bullet points", bullets_result, bullets_msg))
+    
+    # Check criteria 9-17
+    main_table_results = check_main_table(doc)
+    for idx, (check_name, result) in enumerate(main_table_results):
+        results.append((f"{idx + 9}. {check_name}", result, 
+                       "Requirement met" if result else "Requirement not met"))
+    
+    return pd.DataFrame(results, columns=["Criteria", "Passed", "Details"])
+
+if word_file_student:
     try:
-        with open("master.docx", "wb") as f1, open("student.docx", "wb") as f2:
-            f1.write(word_file_master.getbuffer())
-            f2.write(word_file_student.getbuffer())
-
-        master_doc = Document("master.docx")
-        student_doc = Document("student.docx")
-
-        st.subheader("Comparison Results")
+        with open("student.docx", "wb") as f:
+            f.write(word_file_student.getbuffer())
         
-        differences_df = compare_documents(master_doc, student_doc)
+        doc = Document("student.docx")
         
-        if not differences_df.empty:
-            st.write("### Differences Found:")
-            # Add filtering options
-            diff_types = ["All"] + list(differences_df["type"].unique())
-            selected_type = st.selectbox("Filter by difference type:", diff_types)
-            
-            if selected_type != "All":
-                filtered_df = differences_df[differences_df["type"] == selected_type]
-            else:
-                filtered_df = differences_df
-            
-            # Display differences with better formatting
-            st.dataframe(
-                filtered_df,
-                column_config={
-                    "type": "Difference Type",
-                    "location": "Location",
-                    "student": "Student Version",
-                    "master": "Master Version"
-                },
-                hide_index=True
-            )
-            
-            # Summary statistics
-            st.write("### Summary Statistics")
-            type_counts = differences_df["type"].value_counts()
-            st.bar_chart(type_counts)
+        st.subheader("Format Check Results")
+        results_df = generate_report(doc)
+        
+        # Display results with color coding
+        st.dataframe(
+            results_df,
+            column_config={
+                "Criteria": "Requirement",
+                "Passed": st.column_config.CheckboxColumn(
+                    "Status",
+                    help="Whether the requirement was met",
+                    default=False,
+                ),
+                "Details": "Additional Information"
+            },
+            hide_index=True
+        )
+        
+        # Calculate total score
+        total_points = len(results_df) * 10
+        earned_points = sum(results_df["Passed"]) * 10
+        
+        st.write(f"### Total Score: {earned_points}/{total_points}")
+        
+        if earned_points < total_points:
+            st.warning("Some requirements were not met. Please review the details above.")
         else:
-            st.success("✅ No differences found. The student document matches the master.")
-    
+            st.success("All requirements met! Great job!")
+            
     except Exception as e:
-        st.error(f"An error occurred while comparing documents: {str(e)}")
+        st.error(f"An error occurred while checking the document: {str(e)}")
     finally:
-        # Clean up temporary files
-        for filename in ["master.docx", "student.docx"]:
-            if os.path.exists(filename):
-                os.remove(filename)
+        if os.path.exists("student.docx"):
+            os.remove("student.docx")
