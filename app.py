@@ -2,6 +2,7 @@ import streamlit as st
 import docx
 from io import BytesIO
 from difflib import Differ
+import pandas as pd
 
 def compare_word_documents(master_file, student_file):
     try:
@@ -14,7 +15,21 @@ def compare_word_documents(master_file, student_file):
         differ = Differ()
         diff = list(differ.compare(master_text.splitlines(), student_text.splitlines()))
 
-        return diff
+        diff_data = []
+        for line in diff:
+            status = ""
+            text = line[2:]  # Remove the "+", "-", or "?"
+            if line.startswith("+ "):
+                status = "Added in Student"
+            elif line.startswith("- "):
+                status = "Removed from Student"
+            elif line.startswith("? "):
+                status = "Changed in Student" # Less common, but included
+            else:
+                status = "Same"
+            if status != "Same": # We only care about the differences.
+                diff_data.append({"Status": status, "Text": text})
+        return diff_data
 
     except docx.opc.exceptions.PackageNotFoundError:
         return ["Error: One or both files not found or invalid Word documents."]
@@ -35,25 +50,20 @@ if uploaded_master_file and uploaded_student_file:
     else:
         st.subheader("Comparison Results (Master vs. Student)")
 
-        for line in diff_result:
-            if line.startswith("+ "):
-                st.markdown(f"<span style='color:green;'>{line.lstrip('+ ')} (Added in Student)</span>", unsafe_allow_html=True)
-            elif line.startswith("- "):
-                st.markdown(f"<span style='color:red;'>{line.lstrip('- ')} (Removed from Student)</span>", unsafe_allow_html=True)
-            elif line.startswith("? "):  # For highlighting changes, less common in this context
-                st.markdown(f"<span style='color:orange;'>{line}</span>", unsafe_allow_html=True)
-            else:
-                st.write(line)
+        if diff_result:  # Check if there are any differences to display
+            df = pd.DataFrame(diff_result)
+            st.dataframe(df)  # Display the DataFrame as a table
+        else:
+            st.info("No differences found between the documents.") # Inform if no differences.
 
 
-# Optional: Download Diff
+# Optional: Download Diff (now downloads a CSV)
 if uploaded_master_file and uploaded_student_file and "Error:" not in diff_result[0]:
-    diff_text = "\n".join(diff_result)
-    b = BytesIO()
-    b.write(diff_text.encode())
-    st.download_button(
-        label="Download Diff",
-        data=b,
-        file_name="diff.txt",
-        mime="text/plain",
-    )
+    if diff_result:
+        csv_data = pd.DataFrame(diff_result).to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Diff (CSV)",
+            data=csv_data,
+            file_name="diff.csv",
+            mime="text/csv",
+        )
