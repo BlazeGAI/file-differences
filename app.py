@@ -1,15 +1,14 @@
 import streamlit as st
 from docx import Document
-from pptx import Presentation
-from openpyxl import load_workbook
 from deepdiff import DeepDiff
 import webcolors
 import os
+import xml.etree.ElementTree as ET
 
-st.title("Assignment Checker 📄")
+st.title("Word Document Checker 📄")
 
-# Section: Word Document Comparison
-st.header("Word Document Comparison")
+# Upload Master and Student Documents
+st.header("Upload Documents for Comparison")
 word_file_master = st.file_uploader("Upload Master Document (Correct Version)", type=["docx"], key="master_doc")
 word_file_student = st.file_uploader("Upload Student Document", type=["docx"], key="student_doc")
 
@@ -22,8 +21,9 @@ def closest_color(hex_code):
         return hex_code  # Return hex code if no name found
 
 def extract_text_with_styles(doc):
-    """Extracts text, font styles, colors, font sizes, and heading styles."""
+    """Extracts text, font styles, colors, font sizes, headings, and table structures."""
     content = []
+    tables = []
 
     for para in doc.paragraphs:
         text = para.text.strip()
@@ -58,19 +58,54 @@ def extract_text_with_styles(doc):
 
         content.append(styles)
 
-    return content
+    # Extract tables
+    for table in doc.tables:
+        table_data = []
+        for row in table.rows:
+            row_data = []
+            for cell in row.cells:
+                cell_text = cell.text.strip()
+                cell_styles = {
+                    "text": cell_text,
+                    "background_color": None,
+                    "border_bottom": None,
+                }
+
+                tc = cell._tc
+                tc_pr = tc.find("w:tcPr", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                if tc_pr is not None:
+                    shd = tc_pr.find("w:shd", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                    if shd is not None:
+                        cell_styles["background_color"] = closest_color(shd.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}fill", ""))
+
+                    borders = tc_pr.find("w:tcBorders", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                    if borders is not None:
+                        bottom_border = borders.find("w:bottom", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+                        if bottom_border is not None:
+                            cell_styles["border_bottom"] = "Present"
+                        else:
+                            cell_styles["border_bottom"] = "Missing"
+
+                row_data.append(cell_styles)
+            table_data.append(row_data)
+        tables.append(table_data)
+
+    return content, tables
 
 def compare_word_documents(master_doc, student_doc):
-    """Compares two Word documents for text and formatting differences."""
-    master_text = extract_text_with_styles(master_doc)
-    student_text = extract_text_with_styles(student_doc)
+    """Compares two Word documents for text, formatting, and table differences."""
+    master_text, master_tables = extract_text_with_styles(master_doc)
+    student_text, student_tables = extract_text_with_styles(student_doc)
 
-    differences = DeepDiff(master_text, student_text, ignore_order=False, report_repetition=True)
+    differences = {
+        "Text & Formatting Differences": DeepDiff(master_text, student_text, ignore_order=False, report_repetition=True),
+        "Table Differences": DeepDiff(master_tables, student_tables, ignore_order=False, report_repetition=True),
+    }
 
     results = []
     for key, diff in differences.items():
-        if key == "values_changed":
-            for path, change in diff.items():
+        if key == "Text & Formatting Differences":
+            for path, change in diff.get("values_changed", {}).items():
                 index = int(path.split("[")[1].split("]")[0])  # Extract index
                 master_entry = master_text[index]
                 student_entry = student_text[index]
@@ -81,20 +116,16 @@ def compare_word_documents(master_doc, student_doc):
                     "Master Version": master_entry["text"],
                 })
 
-        elif key == "iterable_item_removed":
-            for path, removed in diff.items():
-                results.append({
-                    "Category": "Removed Text",
-                    "Student Version": "(Missing)",
-                    "Master Version": removed["text"],
-                })
+        elif key == "Table Differences":
+            for path, change in diff.get("values_changed", {}).items():
+                index = int(path.split("[")[1].split("]")[0])  # Extract index
+                master_entry = master_tables[0][index]  # Extracts row data
+                student_entry = student_tables[0][index]
 
-        elif key == "iterable_item_added":
-            for path, added in diff.items():
                 results.append({
-                    "Category": "Extra Text",
-                    "Student Version": added["text"],
-                    "Master Version": "(Not in Master)",
+                    "Category": "Table Change",
+                    "Student Version": student_entry,
+                    "Master Version": master_entry,
                 })
 
     return results
@@ -118,25 +149,3 @@ if word_file_master and word_file_student:
 
     os.remove("master.docx")
     os.remove("student.docx")
-
-# Section: Excel Assignments
-st.header("Excel Assignments")
-excel_file = st.file_uploader("Upload Excel Assignment", type=["xlsx"], key="excel")
-
-if excel_file:
-    try:
-        workbook = load_workbook(excel_file)
-        st.write("✅ Excel file uploaded successfully.")
-    except Exception as e:
-        st.error(f"Error loading Excel file: {str(e)}")
-
-# Section: PowerPoint Assignments
-st.header("PowerPoint Assignments")
-ppt_file = st.file_uploader("Upload PowerPoint Assignment", type=["pptx"], key="ppt")
-
-if ppt_file:
-    try:
-        prs = Presentation(ppt_file)
-        st.write("✅ PowerPoint file uploaded successfully.")
-    except Exception as e:
-        st.error(f"Error loading PowerPoint file: {str(e)}")
