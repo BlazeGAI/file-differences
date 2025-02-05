@@ -3,3 +3,4 @@ python-docx
 deepdiff
 lxml
 webcolors
+openpyxl
