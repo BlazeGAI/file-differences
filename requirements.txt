@@ -4,3 +4,4 @@ deepdiff
 lxml
 webcolors
 openpyxl
+python-pptx
