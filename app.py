@@ -31,17 +31,17 @@ def closest_color(hex_code):
                 closest_name = name
         return closest_name
 
-def extract_text_with_styles(doc_path):
+def extract_text_with_styles(doc):
     """Extracts text, font styles, colors, font sizes, and heading styles."""
-    doc = Document(doc_path)
     content = []
-
+    
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
             continue
-        
+
         styles = {
+            "text": text,
             "font_color": None,
             "background_color": None,
             "font_size": None,
@@ -66,16 +66,32 @@ def extract_text_with_styles(doc_path):
                 if highlight is not None:
                     styles["background_color"] = closest_color(highlight.attrib["{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"])
 
-        content.append((text, styles))
+        content.append(styles)
 
-    return content
+    # Extract tables
+    tables = []
+    for table in doc.tables:
+        table_data = []
+        for row in table.rows:
+            row_data = []
+            for cell in row.cells:
+                cell_text = cell.text.strip()
+                row_data.append(cell_text)
+            table_data.append(row_data)
+        tables.append(table_data)
 
-def compare_word_documents(file1, file2):
+    return content, tables
+
+def compare_word_documents(doc1, doc2):
     """Compares two Word documents for text and formatting differences."""
-    text1 = extract_text_with_styles(file1)
-    text2 = extract_text_with_styles(file2)
+    text1, tables1 = extract_text_with_styles(doc1)
+    text2, tables2 = extract_text_with_styles(doc2)
 
-    differences = DeepDiff(text1, text2, ignore_order=False, report_repetition=True)
+    differences = {
+        "Text & Formatting Differences": DeepDiff(text1, text2, ignore_order=False, report_repetition=True),
+        "Table Differences": DeepDiff(tables1, tables2, ignore_order=False, report_repetition=True),
+    }
+
     return differences
 
 if word_file_1 and word_file_2:
@@ -83,10 +99,13 @@ if word_file_1 and word_file_2:
         f1.write(word_file_1.getbuffer())
         f2.write(word_file_2.getbuffer())
 
-    st.subheader("Comparison Results")
-    differences = compare_word_documents("temp1.docx", "temp2.docx")
+    doc1 = Document("temp1.docx")
+    doc2 = Document("temp2.docx")
 
-    if differences:
+    st.subheader("Comparison Results")
+    differences = compare_word_documents(doc1, doc2)
+
+    if differences["Text & Formatting Differences"] or differences["Table Differences"]:
         st.json(differences)
     else:
         st.write("✅ No differences found. The documents are identical.")
